@@ -1,0 +1,12 @@
+SELECT docnum, itmnum, xped, nitemped, netpr FROM j_1bnflin
+   FOR ALL ENTRIES IN @lt_xped
+ WHERE xped     EQ @lt_xped-xped
+   AND nitemped EQ @lt_xped-nitemped
+   AND docnum   NOT IN @lr_docnum
+  INTO CORRESPONDING FIELDS OF TABLE @lt_lin.
+
+SELECT j1~docnum, j1~itmnum, j1~xped, j1~nitemped, j1~netpr FROM j_1bnflin AS j1
+ INNER JOIN @lt_xped AS x ON j1~xped     = x~xped
+                         AND j1~nitemped = x~nitemped
+ WHERE j1~docnum NOT IN @lr_docnum
+  INTO CORRESPONDING FIELDS OF TABLE @lt_lin.
