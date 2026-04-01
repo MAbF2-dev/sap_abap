@@ -1,0 +1,9 @@
+TRY.
+    MODIFY zpi_log FROM lw_prcintercomplog.
+    IF sy-subrc NE 0.
+      " Handle logic-level failure (e.g., record not found)
+    ENDIF.
+  CATCH cx_root INTO DATA(lx_error).
+    " Handle runtime errors (e.g., data conversion issues)
+    DATA(lv_msg) = lx_error->get_text( ).
+ENDTRY.
