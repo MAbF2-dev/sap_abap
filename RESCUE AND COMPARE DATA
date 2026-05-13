@@ -7,23 +7,42 @@ REPORT zcomparedata.
 
 TABLES dd02d.
 
-DATA: reference       TYPE REF TO data,
-      gt_sort         TYPE abap_sortorder_tab,
-      gt_fieldcatalog TYPE lvc_t_fcat,
-      gt_exclude      TYPE ui_functions,
+TYPES: BEGIN OF ty_select,
+         line TYPE char255,
+       END OF ty_select.
 
-      go_splitter     TYPE REF TO cl_gui_splitter_container,
-      go_container    TYPE REF TO cl_gui_container,
-      go_alv          TYPE REF TO cl_gui_alv_grid,
+DATA:
+  gv_value        TYPE string,
+  gv_rfcdest      TYPE rfcdest,
+  gv_fnameprim    TYPE lvc_fname,
+  gv_sysid_l      TYPE syst-sysid,
+  gv_sysid_r      TYPE syst-sysid,
+  gv_wherecl      TYPE string,
+  gv_condense     TYPE xfeld,
+  go_reference    TYPE REF TO data,
+  go_splitter     TYPE REF TO cl_gui_splitter_container,
+  go_container    TYPE REF TO cl_gui_container,
+  go_alv          TYPE REF TO cl_gui_alv_grid,
 
-      gw_variant      TYPE disvariant,
-      gw_layout       TYPE lvc_s_layo.
+  gt_sort         TYPE abap_sortorder_tab,
+  gt_zcomparedata TYPE TABLE OF zcomparedata,
+  gt_fieldcatalog TYPE lvc_t_fcat,
+  gt_exclude      TYPE ui_functions,
+  gw_dyn_view_sql TYPE dba_view_sql_editor,
+  gw_variant      TYPE disvariant,
+  gw_layout       TYPE lvc_s_layo,
+  gt_where        TYPE TABLE OF ty_select,
+  gt_dbtabdata_l  TYPE zdbtabdata,
+  gt_dbtabdata_r  TYPE zdbtabdata,
+  gt_ret2         TYPE TABLE OF zsbc_range_type_2.
+
 
 FIELD-SYMBOLS: <itab>      TYPE STANDARD TABLE,
                <itab_l>    TYPE STANDARD TABLE,
                <itab_r>    TYPE STANDARD TABLE,
                <wa_itab_l> TYPE any,
-               <wa_itab_r> TYPE any.
+               <wa_itab_r> TYPE any,
+               <lv_val>    TYPE any.
 
 PARAMETERS: ptabname LIKE dd02d-dbtabname OBLIGATORY,
             pmantem  AS CHECKBOX.
@@ -42,61 +61,65 @@ MODULE status_0100 OUTPUT.
   SET TITLEBAR '0100'.
 
   IF go_alv IS NOT BOUND.
-    TYPES: BEGIN OF ty_select,
-             line TYPE char75,
-           END OF ty_select.
-
-    DATA: lv_rfcdest     TYPE rfcdest,
-          lv_fnameprim   TYPE lvc_fname,
-          lv_sysid_l     TYPE syst-sysid,
-          lv_sysid_r     TYPE syst-sysid,
-
-          lt_where_e     TYPE TABLE OF ty_select,
-          lt_where_k     TYPE TABLE OF ty_select,
-          lt_dbtabdata_l TYPE zdbtabdata,
-          lt_dbtabdata_r TYPE zdbtabdata,
-          lt_ret2        TYPE TABLE OF zsbc_range_type_2.
-
     SELECT COUNT(*) FROM dd09l
       WHERE tabname EQ @ptabname
-       AND tabart EQ 'APPL2'.
+       AND tabart IN ('APPL0', 'APPL1', 'APPL2').
 
     IF sy-dbcnt GT 0.
+      SELECT * FROM zcomparedata
+       WHERE tabname EQ @ptabname
+       ORDER BY PRIMARY KEY
+        INTO TABLE @gt_zcomparedata.
+
+      REFRESH gw_dyn_view_sql-sqlcmd_list.
+      APPEND INITIAL LINE TO gw_dyn_view_sql-sqlcmd_list ASSIGNING FIELD-SYMBOL(<sqlcmd>).
+      <sqlcmd>-key   = '001'.
+
+      IF gv_value IS INITIAL.
+        <sqlcmd>-value = |SELECT * FROM { ptabname }|.
+      ELSE.
+        <sqlcmd>-value = gv_value.
+      ENDIF.
+
       CALL FUNCTION 'ZFMBC_GET_PARAMETER_2'
         EXPORTING
           i_process_id = 'COMPAREDATA'
         TABLES
-          t_ret        = lt_ret2.
+          t_ret        = gt_ret2.
 
       "Local
-      lv_rfcdest = 'NONE'.
-      READ TABLE lt_ret2 INTO DATA(lw_ret2) WITH KEY field_name = 'RFC_L'.
+      gv_rfcdest = 'NONE'.
+      READ TABLE gt_ret2 INTO DATA(lw_ret2) WITH KEY field_name = 'RFC_L'.
       IF sy-subrc EQ 0.
-        lv_rfcdest = lw_ret2-low.
+        gv_rfcdest = lw_ret2-low.
       ENDIF.
 
       CALL FUNCTION 'ZRESCUEDATA'
-        DESTINATION lv_rfcdest
+        DESTINATION gv_rfcdest
         EXPORTING
           dbtabname = ptabname
+          wherecl   = gv_wherecl
+          condense  = gv_condense
         CHANGING
-          dbtabdata = lt_dbtabdata_l
-          sysid     = lv_sysid_l.
+          dbtabdata = gt_dbtabdata_l
+          sysid     = gv_sysid_l.
 
       "Remote
-      lv_rfcdest = 'NONE'.
-      READ TABLE lt_ret2 INTO lw_ret2 WITH KEY field_name = 'RFC_R'.
+      gv_rfcdest = 'NONE'.
+      READ TABLE gt_ret2 INTO lw_ret2 WITH KEY field_name = 'RFC_R'.
       IF sy-subrc EQ 0.
-        lv_rfcdest = lw_ret2-low.
+        gv_rfcdest = lw_ret2-low.
       ENDIF.
 
       CALL FUNCTION 'ZRESCUEDATA'
-        DESTINATION lv_rfcdest
+        DESTINATION gv_rfcdest
         EXPORTING
           dbtabname = ptabname
+          wherecl   = gv_wherecl
+          condense  = gv_condense
         CHANGING
-          dbtabdata = lt_dbtabdata_r
-          sysid     = lv_sysid_r.
+          dbtabdata = gt_dbtabdata_r
+          sysid     = gv_sysid_r.
 
       gw_variant-report     = sy-repid.
       gw_variant-username   = sy-uname.
@@ -119,15 +142,45 @@ MODULE status_0100 OUTPUT.
 
       PERFORM create_fc.
 
+      "Splitter (2 linhas, 1 coluna)
       CREATE OBJECT go_splitter
         EXPORTING
           parent  = cl_gui_container=>default_screen
-          rows    = 1
+          rows    = 2
           columns = 1.
 
+      "Container Superior
       CALL METHOD go_splitter->get_container
         EXPORTING
           row       = 1
+          column    = 1
+        RECEIVING
+          container = go_container.
+
+      "Altura
+      go_splitter->set_row_height(
+        EXPORTING
+          id     = 1
+          height = 10
+        EXCEPTIONS
+          OTHERS = 0
+       ).
+
+      "Container Superior
+      CALL METHOD go_splitter->get_container
+        EXPORTING
+          row       = 1
+          column    = 1
+        RECEIVING
+          container = go_container.
+
+      cl_dba_gui_tools=>listbox_with_keys( iv_dynpro_field = 'DYN_VIEW_SQL-SQLCMDC'
+                                           it_values       = gw_dyn_view_sql-sqlcmd_list ).
+
+      "Container Inferior
+      CALL METHOD go_splitter->get_container
+        EXPORTING
+          row       = 2
           column    = 1
         RECEIVING
           container = go_container.
@@ -143,28 +196,28 @@ MODULE status_0100 OUTPUT.
           OTHERS            = 5.
 
       DO 3 TIMES.
-        CLEAR reference.
+        CLEAR go_reference.
 
         CALL METHOD cl_alv_table_create=>create_dynamic_table
           EXPORTING
             it_fieldcatalog = gt_fieldcatalog
           IMPORTING
-            ep_table        = reference.
+            ep_table        = go_reference.
 
         CASE sy-index.
-          WHEN 1. ASSIGN reference->* TO <itab>.
-          WHEN 2. ASSIGN reference->* TO <itab_l>.
-          WHEN 3. ASSIGN reference->* TO <itab_r>.
+          WHEN 1. ASSIGN go_reference->* TO <itab>.
+          WHEN 2. ASSIGN go_reference->* TO <itab_l>.
+          WHEN 3. ASSIGN go_reference->* TO <itab_r>.
         ENDCASE.
       ENDDO.
 
       "Local
-      IF lines( lt_dbtabdata_l ) GT 0.
-        READ TABLE lt_dbtabdata_l INTO DATA(lw_dbtabdata) INDEX 1.
-        lv_fnameprim = lw_dbtabdata-fieldname.
+      IF lines( gt_dbtabdata_l ) GT 0.
+        READ TABLE gt_dbtabdata_l INTO DATA(lw_dbtabdata) INDEX 1.
+        gv_fnameprim = lw_dbtabdata-fieldname.
 
-        LOOP AT lt_dbtabdata_l INTO lw_dbtabdata.
-          IF lv_fnameprim EQ lw_dbtabdata-fieldname.
+        LOOP AT gt_dbtabdata_l INTO lw_dbtabdata.
+          IF gv_fnameprim EQ lw_dbtabdata-fieldname.
             APPEND INITIAL LINE TO <itab_l> ASSIGNING <wa_itab_l>.
           ENDIF.
 
@@ -176,12 +229,12 @@ MODULE status_0100 OUTPUT.
       ENDIF.
 
       "Remote
-      IF lines( lt_dbtabdata_r ) GT 0.
-        READ TABLE lt_dbtabdata_r INTO lw_dbtabdata INDEX 1.
-        lv_fnameprim = lw_dbtabdata-fieldname.
+      IF lines( gt_dbtabdata_r ) GT 0.
+        READ TABLE gt_dbtabdata_r INTO lw_dbtabdata INDEX 1.
+        gv_fnameprim = lw_dbtabdata-fieldname.
 
-        LOOP AT lt_dbtabdata_r INTO lw_dbtabdata.
-          IF lv_fnameprim EQ lw_dbtabdata-fieldname.
+        LOOP AT gt_dbtabdata_r INTO lw_dbtabdata.
+          IF gv_fnameprim EQ lw_dbtabdata-fieldname.
             APPEND INITIAL LINE TO <itab_r> ASSIGNING <wa_itab_r>.
           ENDIF.
 
@@ -194,13 +247,30 @@ MODULE status_0100 OUTPUT.
 
       LOOP AT gt_fieldcatalog INTO DATA(lw_fieldcatalog).
         CHECK lw_fieldcatalog-fieldname NE 'SYSID'.
+        CHECK lw_fieldcatalog-fieldname NE 'STATUS'.
+        CHECK lw_fieldcatalog-fieldname NE 'MANDT'.
 
         APPEND INITIAL LINE TO gt_sort ASSIGNING FIELD-SYMBOL(<fs_sort>).
         <fs_sort>-name = lw_fieldcatalog-fieldname.
       ENDLOOP.
 
-      APPEND INITIAL LINE TO gt_sort ASSIGNING <fs_sort>.
-      <fs_sort>-name = 'SYSID'.
+      ASSIGN COMPONENT 'SYSID' OF STRUCTURE <wa_itab_l> TO <lv_val>.
+      IF sy-subrc EQ 0.
+        APPEND INITIAL LINE TO gt_sort ASSIGNING <fs_sort>.
+        <fs_sort>-name = 'SYSID'.
+      ENDIF.
+
+      ASSIGN COMPONENT 'STATUS' OF STRUCTURE <wa_itab_l> TO <lv_val>.
+      IF sy-subrc EQ 0.
+        APPEND INITIAL LINE TO gt_sort ASSIGNING <fs_sort>.
+        <fs_sort>-name = 'STATUS'.
+      ENDIF.
+
+      ASSIGN COMPONENT 'MANDT' OF STRUCTURE <wa_itab_l> TO <lv_val>.
+      IF sy-subrc EQ 0.
+        APPEND INITIAL LINE TO gt_sort ASSIGNING <fs_sort>.
+        <fs_sort>-name = 'MANDT'.
+      ENDIF.
 
       SORT: <itab_l> BY (gt_sort),
             <itab_r> BY (gt_sort).
@@ -208,7 +278,7 @@ MODULE status_0100 OUTPUT.
       "Procura dados do Local no Remoto
       LOOP AT <itab_l> ASSIGNING <wa_itab_l>.
         PERFORM monta_where USING <wa_itab_l>.
-        LOOP AT <itab_r> ASSIGNING <wa_itab_r> WHERE (lt_where_e).
+        LOOP AT <itab_r> ASSIGNING <wa_itab_r> WHERE (gt_where).
         ENDLOOP.
 
         IF sy-subrc EQ 0.
@@ -222,7 +292,7 @@ MODULE status_0100 OUTPUT.
             APPEND <wa_itab_l> TO <itab>.
           ENDIF.
         ELSE.
-          LOOP AT <itab_r> ASSIGNING <wa_itab_r> WHERE (lt_where_k).
+          LOOP AT <itab_r> ASSIGNING <wa_itab_r> WHERE (gt_where).
           ENDLOOP.
 
           IF sy-subrc EQ 0.
@@ -241,7 +311,7 @@ MODULE status_0100 OUTPUT.
 
           ASSIGN COMPONENT 'SYSID' OF STRUCTURE <wa_itab_l> TO <fieldvalue>.
           IF <fieldvalue> IS ASSIGNED.
-            MOVE lv_sysid_l TO <fieldvalue>.
+            MOVE gv_sysid_l TO <fieldvalue>.
           ENDIF.
 
           APPEND <wa_itab_l> TO <itab>.
@@ -251,7 +321,7 @@ MODULE status_0100 OUTPUT.
       "Procura dados do Remoto no Local
       LOOP AT <itab_r> ASSIGNING <wa_itab_r>.
         PERFORM monta_where USING <wa_itab_r>.
-        LOOP AT <itab_l> ASSIGNING <wa_itab_l> WHERE (lt_where_e).
+        LOOP AT <itab_l> ASSIGNING <wa_itab_l> WHERE (gt_where).
         ENDLOOP.
 
         IF sy-subrc EQ 0.
@@ -265,7 +335,7 @@ MODULE status_0100 OUTPUT.
 *            APPEND <wa_itab_l> TO <itab>.
 *          ENDIF.
         ELSE.
-          LOOP AT <itab_l> ASSIGNING <wa_itab_l> WHERE (lt_where_k).
+          LOOP AT <itab_l> ASSIGNING <wa_itab_l> WHERE (gt_where).
           ENDLOOP.
 
           IF sy-subrc EQ 0.
@@ -284,7 +354,7 @@ MODULE status_0100 OUTPUT.
 
           ASSIGN COMPONENT 'SYSID' OF STRUCTURE <wa_itab_r> TO <fieldvalue>.
           IF <fieldvalue> IS ASSIGNED.
-            MOVE lv_sysid_r TO <fieldvalue>.
+            MOVE gv_sysid_r TO <fieldvalue>.
           ENDIF.
 
           APPEND <wa_itab_r> TO <itab>.
@@ -441,7 +511,7 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM domain_text  CHANGING p_fcat    TYPE lvc_s_fcat.
 
-  DATA lt_dd04t TYPE TABLE OF dd04t.
+  DATA gt_dd04t TYPE TABLE OF dd04t.
 
   IF p_fcat-reptext   IS INITIAL AND
      p_fcat-txt_field IS INITIAL AND
@@ -451,21 +521,21 @@ FORM domain_text  CHANGING p_fcat    TYPE lvc_s_fcat.
       EXPORTING
         roll_name     = p_fcat-domname
       TABLES
-        dd04t_tab_a   = lt_dd04t
+        dd04t_tab_a   = gt_dd04t
       EXCEPTIONS
         illegal_value = 1
         OTHERS        = 2.
 
   ENDIF.
 
-  READ TABLE lt_dd04t INTO DATA(ls_dd04t) WITH KEY ddlanguage = 'PT'
+  READ TABLE gt_dd04t INTO DATA(ls_dd04t) WITH KEY ddlanguage = 'PT'
                                                    as4local   = 'A'
                                                    as4vers    = '0000'.
   IF sy-subrc EQ 0.
     PERFORM domain_textt    USING ls_dd04t
                          CHANGING p_fcat.
   ELSE.
-    READ TABLE lt_dd04t INTO ls_dd04t WITH KEY ddlanguage = 'EN'
+    READ TABLE gt_dd04t INTO ls_dd04t WITH KEY ddlanguage = 'EN'
                                                as4local   = 'A'
                                                as4vers    = '0000'.
     IF sy-subrc EQ 0.
@@ -542,101 +612,40 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM monta_where USING p_itab TYPE any.
 
-  REFRESH: lt_where_e[],
-           lt_where_k[].
+  REFRESH gt_where[].
 
   LOOP AT gt_fieldcatalog INTO DATA(lw_fieldcatalog).
-    CASE lw_fieldcatalog-fieldname.
-      WHEN 'MANDT' OR 'STATUS' OR 'SYSID' OR 'CELLSCOL'.
-        "Do nothing
-      WHEN OTHERS.
-        APPEND INITIAL LINE TO lt_where_e ASSIGNING FIELD-SYMBOL(<fs_where_e>).
-        IF lw_fieldcatalog-key EQ abap_true.
-          APPEND INITIAL LINE TO lt_where_k ASSIGNING FIELD-SYMBOL(<fs_where_k>).
-        ENDIF.
+    READ TABLE gt_zcomparedata TRANSPORTING NO FIELDS
+                               WITH KEY   tabname = ptabname
+                                        fieldname = lw_fieldcatalog-fieldname
+                                 BINARY SEARCH.
+    IF sy-subrc EQ 0 OR
+       lines( gt_zcomparedata ) EQ 0.
 
-        ASSIGN COMPONENT lw_fieldcatalog-fieldname OF STRUCTURE p_itab
-                                                   TO FIELD-SYMBOL(<fieldvalue>).
-        IF <fieldvalue> IS ASSIGNED.
-          IF lines( lt_where_e ) EQ 1.
-            <fs_where_e>-line = |{ lw_fieldcatalog-fieldname } = '{ <fieldvalue> }'|.
-          ELSE.
-            <fs_where_e>-line = |AND { lw_fieldcatalog-fieldname } = '{ <fieldvalue> }'|.
-          ENDIF.
+      CASE lw_fieldcatalog-fieldname.
+        WHEN 'MANDT' OR 'STATUS' OR 'SYSID' OR 'CELLSCOL'.
+          "Do nothing
+        WHEN OTHERS.
+          APPEND INITIAL LINE TO gt_where ASSIGNING FIELD-SYMBOL(<fs_where>).
 
-          IF lw_fieldcatalog-key EQ abap_true.
-            IF lines( lt_where_k ) EQ 1.
-              <fs_where_k>-line = |{ lw_fieldcatalog-fieldname } = '{ <fieldvalue> }'|.
+          ASSIGN COMPONENT lw_fieldcatalog-fieldname OF STRUCTURE p_itab
+                                                     TO FIELD-SYMBOL(<fieldvalue>).
+          IF <fieldvalue> IS ASSIGNED.
+            CASE lw_fieldcatalog-inttype.
+              WHEN 'I' OR 'P'.
+                "do nothing
+              WHEN OTHERS.
+                REPLACE ALL OCCURRENCES OF '''' IN <fieldvalue> WITH ' '.
+            ENDCASE.
+
+            IF lines( gt_where ) EQ 1.
+              <fs_where>-line = |{ lw_fieldcatalog-fieldname } = '{ <fieldvalue> }'|.
             ELSE.
-              <fs_where_k>-line = |AND { lw_fieldcatalog-fieldname } = '{ <fieldvalue> }'|.
+              <fs_where>-line = |AND { lw_fieldcatalog-fieldname } = '{ <fieldvalue> }'|.
             ENDIF.
           ENDIF.
-        ENDIF.
-    ENDCASE.
+      ENDCASE.
+    ENDIF.
   ENDLOOP.
 
 ENDFORM.
-
-
-
-
-
-FUNCTION zrescuedata.
-*"----------------------------------------------------------------------
-*"*"Interface local:
-*"  IMPORTING
-*"     VALUE(DBTABNAME) TYPE  TABNAME16
-*"  CHANGING
-*"     VALUE(DBTABDATA) TYPE  ZDBTABDATA
-*"     VALUE(SYSID) TYPE  SYST_SYSID OPTIONAL
-*"----------------------------------------------------------------------
-  DATA: lv_tabname  TYPE dd02l-tabname,
-        lt_fieldcat TYPE lvc_t_fcat,
-        d_reference TYPE REF TO data,
-        out_line    TYPE REF TO data.
-
-  FIELD-SYMBOLS: <itab>    TYPE STANDARD TABLE,
-                 <wa_itab> TYPE any.
-
-  sysid = syst-sysid.
-
-  MOVE dbtabname TO lv_tabname.
-
-  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
-    EXPORTING
-      i_structure_name       = lv_tabname
-    CHANGING
-      ct_fieldcat            = lt_fieldcat
-    EXCEPTIONS
-      inconsistent_interface = 1
-      program_error          = 2
-      OTHERS                 = 3.
-
-  CALL METHOD cl_alv_table_create=>create_dynamic_table
-    EXPORTING
-      it_fieldcatalog = lt_fieldcat
-    IMPORTING
-      ep_table        = d_reference.
-
-  ASSIGN d_reference->* TO <itab>.
-
-  CREATE DATA out_line LIKE LINE OF <itab>.
-  ASSIGN out_line->* TO <wa_itab>.
-
-  SELECT * FROM (dbtabname)
-    INTO TABLE <itab>.
-
-  LOOP AT <itab> ASSIGNING <wa_itab>.
-    LOOP AT lt_fieldcat INTO DATA(lw_fieldcat).
-      APPEND INITIAL LINE TO dbtabdata ASSIGNING FIELD-SYMBOL(<dbtabdata>).
-
-      ASSIGN COMPONENT lw_fieldcat-fieldname OF STRUCTURE <wa_itab> TO FIELD-SYMBOL(<fs>).
-      <dbtabdata>-fieldkey  = lw_fieldcat-key.
-      <dbtabdata>-fieldname = lw_fieldcat-fieldname.
-
-      MOVE <fs> TO <dbtabdata>-fieldvalu.
-      CONDENSE <dbtabdata>-fieldvalu NO-GAPS.
-    ENDLOOP.
-  ENDLOOP.
-
-ENDFUNCTION.
