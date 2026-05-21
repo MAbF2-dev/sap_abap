@@ -1,0 +1,16 @@
+Passo a Passo no SAP GUI
+
+1. Defina um Breakpoint: Coloque um breakpoint (pode ser externo ou de sessão) diretamente dentro do código da sua Function Module.
+2. Inicie a Transação: Execute o programa ou transação que chama a FM até chegar no ponto em que você deseja salvar ou processar (antes do COMMIT WORK).
+3. Ative o Debugger: Digite /h no campo de comando e pressione Enter para ativar o modo de depuração padrão.
+4. Habilite a Depuração de Atualização:No menu do Debugger, vá em Settings -> Change Debugger Profile/Settings.Marque a opção Update Debugging e confirme.
+5. Prossiga com a Execução: Pressione F8 (Continue). O sistema terminará a execução da sessão principal.
+6. Nova Janela de Debugger: Assim que o comando COMMIT WORK for executado, o sistema abrirá automaticamente uma nova sessão de depuração exclusiva para a tarefa de atualização.
+7. Depure a FM: Dentro desta nova sessão, pressione F8 novamente para que o debugger pare no breakpoint que você definiu no passo 1.
+
+Dicas Importantes
+
+1. Atraso na Execução: O debugger de atualização só é disparado após o comando COMMIT WORK no código principal.
+2. No Eclipse (ADT): Se estiver usando o ABAP Development Tools, você pode ativar o "Update Debugging" através do botão de ações do debugger na perspectiva ABAP.
+3. Restrição de Sessões: O SAP permite um número limitado de sessões abertas. Se você já estiver com o limite de janelas ocupado, a nova sessão de debug de atualização pode não abrir.
+4. Evite o comando BREAK-POINT: Prefira usar breakpoints de sessão ou externos, pois o comando estático BREAK-POINT pode travar processos de sistema se esquecido no código.
